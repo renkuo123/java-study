@@ -1,0 +1,55 @@
+---
+description: 项目核心约定（技术栈、API、分层、异常）
+alwaysApply: true
+---
+
+# h5-xyqb-platform 核心约定
+
+## 技术栈
+- Java 17，Spring Boot **3.2.5**，Maven
+- 数据：**Spring Data MongoDB**（无 JPA/MyBatis）
+- API 文档：**SpringDoc OpenAPI**（`/swagger-ui.html`，`/v3/api-docs`）
+- 校验：Jakarta Validation；AOP：日志、限流
+
+## API 与响应
+- 路径前缀：`AppConstants.API_PREFIX` → **`/api/v1`**
+- Controller 返回值统一为 **`ApiResponse<T>`**（`success` / `fail`）
+- 业务可预期错误：抛 **`BusinessException`** → HTTP **200** + 错误码
+- 参数校验失败等：全局处理 → HTTP **400**（见 `GlobalExceptionHandler`）
+
+## 业务模块包结构（新模块照抄 `category`）
+根包：`com.xyqb.platform.module.{模块名}`
+
+| 层 | 路径示例 |
+|----|----------|
+| Controller | `.../controller` |
+| Service 接口 | `.../service` |
+| Service 实现 | `.../service/impl` |
+| Entity（Mongo 文档） | `.../entity` |
+| 入参 DTO | `.../dto` |
+| 出参 VO | `.../vo` |
+| Repository | `.../repository`（`MongoRepository<Entity, String>`） |
+
+## 前端契约（H5）
+- 分类列表：`GET /api/v1/categories/tree?pageNo=1&pageSize=20`；可选 **`name`** 模糊筛选展示名；`data` 为 **`PageResult`**；**兼容** `page`/`size`，参数名忽略大小写。
+- 分类创建/更新：请求体可用 **`name`** 或 **`categoryName`**；支持 **JSON** 与 **`application/x-www-form-urlencoded`**（字段 `name`）。
+- 可选请求头：`Access-Token`、`X-Auth-Token`、`qg-tenant-id`（及 `Authorization: Bearer`）→ **`ClientRequestContext`**，便于后续鉴权/租户；当前仅解析不拦截。
+
+## 横切代码
+- `com.xyqb.platform.common.response.ApiResponse`
+- `com.xyqb.platform.common.exception.*` + `GlobalExceptionHandler`
+- `com.xyqb.platform.common.enums.BusinessCode` / `SystemCode`
+- `com.xyqb.platform.common.base.BaseEntity`（id、createdAt、updatedAt，Mongo 审计）
+- 限流：`@RateLimit`（读接口常见 20 QPS，写接口 5 QPS，与 category 对齐）
+
+## 需求改动自检（避免遗漏）
+- 新字段：Entity + DTO/VO + Service 映射 + **Repository 查询若涉及** + Controller（若暴露）+ **测试**
+- 新接口：Controller + DTO + Service + Swagger 注解 + **ControllerTest + ServiceTest**
+
+## 技术栈变更时（必做，勿漏）
+以下任一情况，**同一批改动**须同步更新 **`docs/ai-index.md`**（仓库概览、横切速查、新依赖说明）及 **`.cursor/rules/*.mdc`**（`project-core` 技术栈摘要；涉及 Java/测试约定则改 `java-backend` / `testing`；大项可新增专题 `.mdc`）：
+- 修改 **`pom.xml`**（换/增核心依赖：数据访问、消息、缓存、安全、文档等）
+- 换或增 **基础设施**（如 DB 类型、Redis、MQ、网关、观测性）
+- 新增 **全局横切**（统一返回、异常、鉴权、多数据源等）且影响开发方式
+
+MR/自测前自检：**栈变了 → 文档与 rule 已对齐。**

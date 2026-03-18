@@ -1,0 +1,24 @@
+---
+description: 单元测试与 Web 层测试约定
+globs: src/test/java/**/*.java
+alwaysApply: false
+---
+
+# 测试约定
+
+## Controller
+- **`@WebMvcTest(具体Controller.class)`**
+- Service 使用 **`@MockBean`**
+- 使用 **`MockMvc`** + `jsonPath` 校验 **`code` / `businessCode` / `data`**
+- 校验失败、业务异常等断言 HTTP 状态与统一响应结构
+
+## Service
+- **`@ExtendWith(MockitoExtension.class)`**
+- Repository **`@Mock`**，对 **Service 实现类** **`@InjectMocks`**
+- 用 **`@Nested`** 按被测方法分组；**AssertJ**（`assertThat` / `assertThatThrownBy`）
+- BDD：**given → when → then**；验证 **`verify`** / **`never()`** 调用
+
+## 新增能力时
+- 新接口：**补 `*ControllerTest`**
+- 新逻辑：**补 `*ServiceTest`（或扩展 Nested）**
+- 涉及 Mongo 复杂查询：可考虑 **`@DataMongoTest`**（当前项目以 Mock 为主）

@@ -1,0 +1,30 @@
+---
+description: Java 后端（Controller/Service/Mongo）编写约定
+globs: src/main/java/**/*.java
+alwaysApply: false
+---
+
+# Java 后端约定
+
+## Controller
+- `@RestController`，路径：`@RequestMapping(AppConstants.API_PREFIX + "/...")`
+- 请求体使用 **`@Valid @RequestBody`**；需要路径/查询参数校验时在类上加 **`@Validated`**
+- 不写业务逻辑，只调 Service 并 `ApiResponse.success(...)`
+- 对外接口加 **`@Operation`**、类加 **`@Tag`**；写操作考虑 **`@RateLimit(permitsPerSecond = 5)`**，读操作 **20**（与现有 category 一致）
+
+## Service
+- 接口在 `service`，实现在 `service/impl`
+- 业务规则、排序、树/列表组装在 Service；持久化通过 Repository
+
+## Mongo Entity
+- 继承 **`BaseEntity`**；`@Document(collection = "...")`
+- Java 字段名与 BSON 不一致时用 **`@Field("mongoFieldName")`**
+- 需查询/去重的字段加 **`@Indexed`**（与 `Category` 一致）
+- **集合名与 Java 类名可不一致**（如 `Category` → 集合 `suggestType`），改集合或字段时同步注释与前端/运维
+
+## Repository
+- `extends MongoRepository<实体, String>`；复杂查询可后续加 **`MongoTemplate`** 或自定义方法
+
+## 异常与码
+- 可预期业务失败：**`BusinessException(SystemCode, BusinessCode)`**
+- 新增业务错误时优先扩展 **`BusinessCode`**（必要时 **`SystemCode`**），再在 `GlobalExceptionHandler` 中无需改动的可继续用现有映射
