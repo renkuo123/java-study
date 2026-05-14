@@ -11,6 +11,18 @@ spring:
   data:
     mongodb:
       auto-index-creation: true
+    # ====== Redis 缓存配置（默认值，可被 dev/prod profile 覆盖）======
+    redis:
+      host: localhost          # Redis 服务器地址
+      port: 6379               # Redis 默认端口
+      database: 0              # 使用第 0 号数据库（Redis 有 0~15 共 16 个库，类似命名空间）
+      timeout: 3000ms          # 连接超时时间
+      lettuce:                 # Lettuce 客户端连接池配置
+        pool:
+          max-active: 8        # 最大活跃连接数（同时使用的连接上限）
+          max-idle: 8          # 最大空闲连接数（连接池中保留的空闲连接）
+          min-idle: 0          # 最小空闲连接数
+          max-wait: -1ms       # 获取连接的最大等待时间（-1 表示无限等待）
 
 springdoc:
   api-docs:

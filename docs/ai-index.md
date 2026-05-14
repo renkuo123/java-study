@@ -21,6 +21,7 @@
 | 入口 | `com.xyqb.platform.PlatformApplication` |
 | 配置 | `src/main/resources/application.yml`（profile: dev/prod） |
 | 日志 | `src/main/resources/logback-spring.xml` |
+| 缓存 | Spring Data Redis（Lettuce 客户端），手动 Cache-Aside 模式 |
 
 ## 目录结构（主代码）
 
@@ -31,7 +32,8 @@ src/main/java/com/xyqb/platform/
 │   ├── annotation/            # e.g. RateLimit
 │   ├── aspect/                # LogAspect, RateLimitAspect
 │   ├── base/BaseEntity.java   # Mongo 文档基类 + 审计字段
-│   ├── config/                # SwaggerConfig, WebMvcConfig, MongoConfig
+│   ├── config/                # SwaggerConfig, WebMvcConfig, MongoConfig, RedisConfig
+│   ├── service/RedisCacheService.java（Redis 缓存通用工具类）
 │   ├── constant/AppConstants.java, ApiClientHeaders.java（H5 请求头名）
 │   ├── context/ClientRequestContext.java（租户/令牌，ThreadLocal）
 │   ├── filter/ClientRequestContextFilter.java
@@ -52,9 +54,11 @@ src/main/java/com/xyqb/platform/
 ## 目录结构（测试）
 
 ```
-src/test/java/com/xyqb/platform/module/category/
-├── controller/CategoryControllerTest.java
-└── service/CategoryServiceTest.java
+src/test/java/com/xyqb/platform/
+├── common/service/RedisCacheServiceTest.java
+└── module/category/
+    ├── controller/CategoryControllerTest.java
+    └── service/CategoryServiceTest.java
 ```
 
 ## 横切文件速查
@@ -70,6 +74,8 @@ src/test/java/com/xyqb/platform/module/category/
 | Swagger | `common/config/SwaggerConfig.java` |
 | 限流 | `@RateLimit` + `RateLimitAspect` |
 | 分页 VO | `common/vo/PageResult.java` |
+| Redis 配置 | `common/config/RedisConfig.java`（RedisTemplate JSON 序列化） |
+| Redis 缓存 | `common/service/RedisCacheService.java`（通用缓存 set/get/delete） |
 
 ## 模块：category（分类）
 
@@ -85,6 +91,8 @@ src/test/java/com/xyqb/platform/module/category/
 **Mongo：** `@Document(collection = "suggestType")`（类名 `Category`，集合名 **suggestType**）。
 
 **HTTP 示例前缀：** `/api/v1/categories`（见 `CategoryController`）。
+
+**Redis 缓存：** 使用 Cache-Aside 模式。Key：`category:list`（全量列表，TTL 30 分钟）、`category:detail:{id}`（详情，TTL 30 分钟）。写操作（增/改/删）后主动清除缓存。
 
 - **入参名称：** JSON/表单均支持字段 **`name`**（与 `categoryName` 等价）；写接口支持 **`application/json`** 与 **`application/x-www-form-urlencoded`**。
 - **前端请求头：** `Access-Token` / `X-Auth-Token`、`qg-tenant-id` 等由 `ClientRequestContextFilter` 解析至 `ClientRequestContext`（当前不强制鉴权）。
@@ -132,6 +140,7 @@ java -jar -Dspring.profiles.active=prod target/h5-xyqb-platform-*.jar
 ### 4. 发布前检查
 
 - [ ] 目标 Mongo 可达，账号权限与库名正确。
+- [ ] Redis 可达，密码与库号正确。
 - [ ] 索引策略：`application.yml` 中 `spring.data.mongodb.auto-index-creation` 在生产是否仍适用（若关闭，需提前建好索引）。
 - [ ] 健康检查：`GET /actuator/health`（若经网关暴露，需与安全策略一致）。
 

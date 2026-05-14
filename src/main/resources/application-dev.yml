@@ -2,6 +2,12 @@ spring:
   data:
     mongodb:
       uri: mongodb://qa:qatest@172.24.192.9:31460/h5_xyqb?authSource=admin
+    # ====== dev 环境 Redis 配置 ======
+    redis:
+      host: localhost          # 本地开发用 localhost；如果你用 Docker 跑 Redis，也是 localhost
+      port: 6379
+      password:                # 本地 Redis 通常无密码，留空即可
+      database: 0
 
 logging:
   level:

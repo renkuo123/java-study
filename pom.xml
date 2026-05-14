@@ -37,6 +37,22 @@
             <artifactId>spring-boot-starter-data-mongodb</artifactId>
         </dependency>
 
+        <!--
+            Spring Data Redis：提供 Redis 缓存支持
+            ════════════════════════════════════════
+            这个 starter 包含了：
+            - spring-data-redis：Spring 对 Redis 的抽象层（类似前端的 axios 对 HTTP 的封装）
+            - lettuce-core：Redis 客户端驱动（类似前端的 node-redis）
+              Lettuce 是基于 Netty 的非阻塞客户端，线程安全，一个连接可以被多个线程共享
+
+            版本号不需要写，因为 <parent> 中的 spring-boot-starter-parent 3.2.5
+            已经帮我们管理好了所有 Spring 官方 starter 的版本（类似前端 monorepo 中的统一版本管理）
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- Jakarta Validation -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

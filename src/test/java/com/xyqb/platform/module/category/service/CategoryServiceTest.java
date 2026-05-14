@@ -1,7 +1,9 @@
 package com.xyqb.platform.module.category.service;
 
+import com.xyqb.platform.common.constant.AppConstants;
 import com.xyqb.platform.common.enums.BusinessCode;
 import com.xyqb.platform.common.exception.BusinessException;
+import com.xyqb.platform.common.service.RedisCacheService;
 import com.xyqb.platform.module.category.dto.CategoryCreateDTO;
 import com.xyqb.platform.module.category.dto.CategoryUpdateDTO;
 import com.xyqb.platform.module.category.entity.Category;
@@ -25,6 +27,9 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -33,14 +38,14 @@ import static org.mockito.Mockito.verify;
  * CategoryService 单元测试
  *
  * <p>
- * 使用 Mockito 框架 Mock 掉 Repository 层，隔离测试 Service 层的业务逻辑。
+ * 使用 Mockito 框架 Mock 掉 Repository 层和 RedisCacheService，隔离测试 Service 层的业务逻辑。
  *
  * <p>
  * 测试规范：
  * <ul>
  * <li>{@code @ExtendWith(MockitoExtension.class)} - 启用 Mockito 注解支持，无需启动 Spring
  * 容器</li>
- * <li>{@code @Mock} - 创建 Repository 的模拟对象</li>
+ * <li>{@code @Mock} - 创建 Repository 和 RedisCacheService 的模拟对象</li>
  * <li>{@code @InjectMocks} - 自动将 Mock 对象注入到 Service 实现类中</li>
  * <li>{@code @Nested} - 按方法分组组织测试用例，结构清晰</li>
  * <li>使用 BDD 风格：given（准备）→ when（执行）→ then（断言）</li>
@@ -55,6 +60,19 @@ class CategoryServiceTest {
     /** Mock 的分类 Repository，不会真正访问数据库 */
     @Mock
     private CategoryRepository categoryRepository;
+
+    /**
+     * Mock 的 Redis 缓存服务，不会真正访问 Redis
+     *
+     * <p>
+     * 新增：因为 CategoryServiceImpl 现在依赖 RedisCacheService，
+     * 所以测试中也要 mock 它。@InjectMocks 会自动把这个 mock 注入到 categoryService 中。
+     * Mockito 的 mock 对象默认行为：方法返回 null / 0 / false（根据返回类型），
+     * 这正好模拟了"缓存未命中"的场景。
+     * </p>
+     */
+    @Mock
+    private RedisCacheService redisCacheService;
 
     /** 被测试的 Service 实现类，自动注入上面的 Mock 对象 */
     @InjectMocks
@@ -91,8 +109,11 @@ class CategoryServiceTest {
     class GetCategoryTreeTests {
 
         @Test
-        @DisplayName("数据库为空时应返回空分页")
+        @DisplayName("数据库为空时应返回空分页，并以短 TTL 缓存空结果防止穿透")
         void shouldReturnEmptyListWhenNoCategoriesExist() {
+            // given — 缓存未命中（返回 null），DB 也为空
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findAll()).willReturn(Collections.emptyList());
 
             PageResult<CategoryVO> page = categoryService.getCategoryTree(1, 20);
@@ -102,11 +123,59 @@ class CategoryServiceTest {
             assertThat(page.getPageNo()).isEqualTo(1);
             assertThat(page.getPageSize()).isEqualTo(20);
             assertThat(page.getTotalPages()).isZero();
+
+            // 验证空结果也被缓存了（使用短 TTL 防止缓存穿透）
+            verify(redisCacheService).set(
+                    eq(AppConstants.CACHE_KEY_CATEGORY_LIST),
+                    eq(Collections.emptyList()),
+                    eq(AppConstants.CACHE_EMPTY_TTL_MINUTES),
+                    any()
+            );
+        }
+
+        @Test
+        @DisplayName("缓存未命中时应查询 MongoDB 并写入缓存")
+        void shouldQueryDbAndSetCacheWhenCacheMiss() {
+            // given — 缓存未命中
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
+            given(categoryRepository.findAll()).willReturn(List.of(rootCategory, childCategory));
+
+            // when
+            PageResult<CategoryVO> page = categoryService.getCategoryTree(1, 20);
+
+            // then — 验证查了 DB 且把结果写入了缓存
+            verify(categoryRepository).findAll();
+            verify(redisCacheService).set(
+                    eq(AppConstants.CACHE_KEY_CATEGORY_LIST),
+                    any(List.class),
+                    eq(AppConstants.CACHE_CATEGORY_TTL_MINUTES),
+                    any()
+            );
+            assertThat(page.getList()).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("缓存命中时不应查询 MongoDB")
+        void shouldUseCachedDataWhenCacheHit() {
+            // given — 缓存命中，直接返回数据
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(List.of(rootCategory, childCategory));
+
+            // when
+            PageResult<CategoryVO> page = categoryService.getCategoryTree(1, 20);
+
+            // then — 不应该调用 DB
+            verify(categoryRepository, never()).findAll();
+            assertThat(page.getList()).hasSize(2);
+            assertThat(page.getList().get(0).getName()).isEqualTo("商城购物");
         }
 
         @Test
         @DisplayName("第一页应按 order 倒序返回扁平列表")
         void shouldReturnFlatListSortedByOrderDesc() {
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findAll()).willReturn(List.of(rootCategory, childCategory));
 
             PageResult<CategoryVO> page = categoryService.getCategoryTree(1, 20);
@@ -123,6 +192,8 @@ class CategoryServiceTest {
         @Test
         @DisplayName("pageSize=1 第二页应只含第二条")
         void shouldReturnSecondPageWhenPageNoIs2() {
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findAll()).willReturn(List.of(rootCategory, childCategory));
 
             PageResult<CategoryVO> page = categoryService.getCategoryTree(2, 1);
@@ -136,6 +207,8 @@ class CategoryServiceTest {
         @Test
         @DisplayName("pageNo 非法时按 1 处理；pageSize 超过上限按 100")
         void shouldNormalizePageParams() {
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findAll()).willReturn(List.of(rootCategory));
 
             PageResult<CategoryVO> p1 = categoryService.getCategoryTree(0, 20);
@@ -156,6 +229,8 @@ class CategoryServiceTest {
             cOther.setId("o1");
             cOther.setCategoryName("付款问题");
             cOther.setOrder(1);
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findAll()).willReturn(List.of(cOther, rootCategory, cTest, childCategory));
 
             PageResult<CategoryVO> page = categoryService.getCategoryTree(1, 10, "测试");
@@ -168,6 +243,8 @@ class CategoryServiceTest {
         @Test
         @DisplayName("name 无匹配时 total 为 0")
         void shouldReturnEmptyWhenNameMatchesNothing() {
+            given(redisCacheService.getList(eq(AppConstants.CACHE_KEY_CATEGORY_LIST), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findAll()).willReturn(List.of(rootCategory));
 
             PageResult<CategoryVO> page = categoryService.getCategoryTree(1, 10, "不存在的关键词");
@@ -183,19 +260,46 @@ class CategoryServiceTest {
     class GetCategoryByIdTests {
 
         @Test
-        @DisplayName("分类存在时应正常返回")
-        void shouldReturnCategoryWhenFound() {
-            given(categoryRepository.findById("root-001")).willReturn(Optional.of(rootCategory));
+        @DisplayName("缓存命中时应直接返回，不查 MongoDB")
+        void shouldReturnCachedCategoryWhenCacheHit() {
+            // given — 缓存中有这条数据
+            String cacheKey = AppConstants.CACHE_KEY_CATEGORY_DETAIL_PREFIX + "root-001";
+            given(redisCacheService.get(eq(cacheKey), eq(Category.class)))
+                    .willReturn(rootCategory);
 
+            // when
             CategoryVO vo = categoryService.getCategoryById("root-001");
 
+            // then — 不应查 DB
+            verify(categoryRepository, never()).findById(anyString());
             assertThat(vo.getId()).isEqualTo("root-001");
             assertThat(vo.getName()).isEqualTo("商城购物");
         }
 
         @Test
+        @DisplayName("缓存未命中时应查 MongoDB 并写入缓存")
+        void shouldQueryDbAndSetCacheWhenCacheMiss() {
+            // given — 缓存未命中
+            String cacheKey = AppConstants.CACHE_KEY_CATEGORY_DETAIL_PREFIX + "root-001";
+            given(redisCacheService.get(eq(cacheKey), eq(Category.class)))
+                    .willReturn(null);
+            given(categoryRepository.findById("root-001")).willReturn(Optional.of(rootCategory));
+
+            // when
+            CategoryVO vo = categoryService.getCategoryById("root-001");
+
+            // then — 查了 DB 且写入了缓存
+            verify(categoryRepository).findById("root-001");
+            verify(redisCacheService).set(eq(cacheKey), eq(rootCategory), anyLong(), any());
+            assertThat(vo.getId()).isEqualTo("root-001");
+        }
+
+        @Test
         @DisplayName("分类不存在时应抛出 BusinessException")
         void shouldThrowWhenNotFound() {
+            String cacheKey = AppConstants.CACHE_KEY_CATEGORY_DETAIL_PREFIX + "nonexistent";
+            given(redisCacheService.get(eq(cacheKey), eq(Category.class)))
+                    .willReturn(null);
             given(categoryRepository.findById("nonexistent")).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> categoryService.getCategoryById("nonexistent"))
@@ -211,7 +315,7 @@ class CategoryServiceTest {
     class CreateCategoryTests {
 
         @Test
-        @DisplayName("正常创建根分类")
+        @DisplayName("正常创建根分类，并清除列表缓存")
         void shouldCreateRootCategory() {
             CategoryCreateDTO dto = new CategoryCreateDTO();
             dto.setCategoryName("新分类");
@@ -238,6 +342,9 @@ class CategoryServiceTest {
             assertThat(result.getName()).isEqualTo("新分类");
             assertThat(result.getOrder()).isEqualTo(9);
             verify(categoryRepository).save(any(Category.class));
+
+            // 验证创建后清除了列表缓存
+            verify(redisCacheService).delete(AppConstants.CACHE_KEY_CATEGORY_LIST);
         }
 
         @Test
@@ -311,7 +418,7 @@ class CategoryServiceTest {
     class UpdateCategoryTests {
 
         @Test
-        @DisplayName("名称未改（与当前展示名一致）应成功")
+        @DisplayName("名称未改（与当前展示名一致）应成功，并清除缓存")
         void shouldPassWhenNameUnchanged() {
             Category self = new Category();
             self.setId("a1");
@@ -328,6 +435,10 @@ class CategoryServiceTest {
 
             assertThat(vo.getName()).isEqualTo("手机");
             verify(categoryRepository).save(any(Category.class));
+
+            // 验证更新后清除了列表缓存和详情缓存
+            verify(redisCacheService).delete(AppConstants.CACHE_KEY_CATEGORY_LIST);
+            verify(redisCacheService).delete(AppConstants.CACHE_KEY_CATEGORY_DETAIL_PREFIX + "a1");
         }
 
         @Test
@@ -362,13 +473,17 @@ class CategoryServiceTest {
     class DeleteCategoryTests {
 
         @Test
-        @DisplayName("无子分类时应正常删除")
-        void shouldDeleteWhenNoChildren() {
+        @DisplayName("正常删除，并清除列表缓存和详情缓存")
+        void shouldDeleteAndInvalidateCaches() {
             given(categoryRepository.existsById("child-001")).willReturn(true);
 
             categoryService.deleteCategory("child-001");
 
             verify(categoryRepository).deleteById("child-001");
+
+            // 验证删除后清除了两个缓存
+            verify(redisCacheService).delete(AppConstants.CACHE_KEY_CATEGORY_LIST);
+            verify(redisCacheService).delete(AppConstants.CACHE_KEY_CATEGORY_DETAIL_PREFIX + "child-001");
         }
 
         @Test

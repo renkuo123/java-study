@@ -8,6 +8,7 @@ alwaysApply: true
 ## 技术栈
 - Java 17，Spring Boot **3.2.5**，Maven
 - 数据：**Spring Data MongoDB**（无 JPA/MyBatis）
+- 缓存：**Spring Data Redis**（Lettuce 客户端），手动 Cache-Aside 模式（不使用 @Cacheable）
 - API 文档：**SpringDoc OpenAPI**（`/swagger-ui.html`，`/v3/api-docs`）
 - 校验：Jakarta Validation；AOP：日志、限流
 
@@ -41,10 +42,13 @@ alwaysApply: true
 - `com.xyqb.platform.common.enums.BusinessCode` / `SystemCode`
 - `com.xyqb.platform.common.base.BaseEntity`（id、createdAt、updatedAt，Mongo 审计）
 - 限流：`@RateLimit`（读接口常见 20 QPS，写接口 5 QPS，与 category 对齐）
+- Redis：`com.xyqb.platform.common.config.RedisConfig`（RedisTemplate JSON 序列化）
+- 缓存工具：`com.xyqb.platform.common.service.RedisCacheService`（通用 get/set/delete，读降级）
 
 ## 需求改动自检（避免遗漏）
 - 新字段：Entity + DTO/VO + Service 映射 + **Repository 查询若涉及** + Controller（若暴露）+ **测试**
 - 新接口：Controller + DTO + Service + Swagger 注解 + **ControllerTest + ServiceTest**
+- 涉及已缓存数据的写操作：确保清除对应缓存 Key（参考 `CategoryServiceImpl` 中的缓存清除逻辑）
 
 ## 技术栈变更时（必做，勿漏）
 以下任一情况，**同一批改动**须同步更新 **`docs/ai-index.md`**（仓库概览、横切速查、新依赖说明）及 **`.cursor/rules/*.mdc`**（`project-core` 技术栈摘要；涉及 Java/测试约定则改 `java-backend` / `testing`；大项可新增专题 `.mdc`）：
